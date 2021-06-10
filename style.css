@@ -283,7 +283,15 @@ a.toggle-link:hover {
   font-size: 14px;
   display: inline-flex;
   text-decoration: none;
-  padding-left: 96px;
+  padding-right: 88px;
+  font-family: Roboto Mono, Courier, monospace;
+}
+.sponsor-l {
+  height: 24px;
+  font-size: 14px;
+  display: inline-flex;
+  text-decoration: none;
+  padding-left: 88px;
   font-family: Roboto Mono, Courier, monospace;
 }
 /* public url */

@@ -206,7 +206,7 @@ const central = (props) => {
       ]),
     ]),
     h("div", { class: "footer" }, [
-      h("a", { class: "sponsor", href:"https://deta.space/discovery/yarc" }, [
+      h("a", { class: "sponsor-l", href:"https://deta.space/discovery/yarc" }, [
         h("div", { innerHTML: svg, class: "sponsor-svg" }),
         h("div", { class: "sponsor-message" }, text("Install on Deta")),
       ]),
