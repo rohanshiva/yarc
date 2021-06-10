@@ -1,21 +1,99 @@
-// /** input in html file by Jinja template
-//  *
-// import { h, app } from "https://unpkg.com/hyperapp";
-// let input = {{ note_data|tojson }};
-
-// */
-
 const converter = new showdown.Converter();
 let jar;
 
+// default values
+
+const defaultContent =
+  '## Info:\n\nThis is a "box" of notes. \n\nEvery note has a  url at: `https://zzygen.deta.dev/notes/:note_name`\n\nThe notes are also accessible via API:\n\n`GET https://zzygen.deta.dev/notes/:note_name?json=true`\n\nAnyone with **run access** can edit and view the note.\n\nYou can edit notes using the **edit** button, writing regular markdown.\n\nYou can [[link]] to any note in your box using the convention **[[~note_name]]**.\n- This creates bi-directional links. \n\nA list of all notes that link to the present note are under a header **Backlinks**.';
+
+const defaultNote = {
+  content: defaultContent,
+  backlinks: [],
+  last_modified: new Date().toISOString(),
+  links: [],
+  name: new Date().toLocaleDateString("fr-CA"),
+  recent_notes: [],
+};
+
 // helpers
+
+const removeBacklink = (noteName, backlink) => {
+  let note = JSON.parse(localStorage.getItem(noteName));
+  if (note) {
+    note.backlinks = note.backlinks.filter((link) => link != backlink);
+    localStorage.setItem(noteName, JSON.stringify(note));
+    return;
+  }
+};
+
+const addBacklink = (noteName, backlink) => {
+  let note = JSON.parse(localStorage.getItem(noteName));
+
+  if (note) {
+    note.backlinks.push(backlink);
+    localStorage.setItem(noteName, JSON.stringify(note));
+    return;
+  } else {
+    note = defaultNote;
+    note.name = noteName;
+    note.backlinks = [backlink];
+    localStorage.setItem(noteName, JSON.stringify(note));
+    return;
+  }
+};
+
+const listDiff = (listOne, listTwo) => {
+  let diffList = [];
+  for (let each of listOne) {
+    if (!listTwo.includes(each)) {
+      diffList.push(each);
+    }
+  }
+  diffList = new Set(diffList);
+  diffList = Array.from(diffList);
+  return diffList;
+};
+
+const updateLinks = (state) => {
+  const oldNote = JSON.parse(localStorage.getItem(state.route));
+  const oldLinks = oldNote ? oldNote.links : [];
+
+  const removedLinks = listDiff(oldLinks, state.note.links);
+  const addedLinks = listDiff(state.note.links, oldLinks);
+
+  for (let each of removedLinks) {
+    if (each != "") {
+      removeBacklink(each, state.route);
+    }
+  }
+
+  for (let each of addedLinks) {
+    if (each != "") {
+      addBacklink(each, state.route);
+    }
+  }
+
+  const note = JSON.parse(localStorage.getItem(state.route));
+  const updatedBacklinks = note ? note.backlinks : [];
+  return updatedBacklinks;
+};
+
+const allNotes = () => {
+  let notes = [];
+  for (const key in localStorage) {
+    if (localStorage.hasOwnProperty(key)) {
+      notes.push(key);
+    }
+  }
+  return notes;
+}
 const linkSub = (rawMD, links) => {
   let newMD = rawMD;
   for (const each of links) {
     let replacement;
     if (each[2] !== "~") {
       const bareName = each.substring(2, each.length - 2);
-      replacement = `[${bareName}](/notes/${encodeURI(bareName)})`;
+      replacement = `[${bareName}](#${encodeURI(bareName)})`;
     } else {
       // if the link is escaped with ~
       const bareName = each.substring(3, each.length - 2);
@@ -38,7 +116,7 @@ const getBareLinks = (rawMD) => {
     .map((each) => each.substring(2, each.length - 2))
     .filter((mappedEach) => mappedEach[0] !== "~");
   return bareLinks;
-}
+};
 
 const getlastEdited = (lastModified) => {
   if (lastModified === "saving" || lastModified === "failed to save") {
@@ -70,23 +148,49 @@ const getlastEdited = (lastModified) => {
   }
 };
 
-const checkUnsaved = (options) => {
-  const note = options.note;
-  const name = note.name;
+// routing
+const _onhashchange = (dispatch, options) => {
+  const handler = () => dispatch(options.action, location.hash);
+  addEventListener("hashchange", handler);
+  requestAnimationFrame(handler);
+  return () => removeEventListener("hashchange", handler);
+};
+
+const onhashchange = (action) => [_onhashchange, { action }];
+const HashHandler = (state, hash) => {
+  const newState = {
+    ...state,
+    route:
+      hash === "" ? new Date().toLocaleDateString("fr-CA") : hash.substring(1),
+  };
+  return [
+    newState,
+    [
+      attachMarkdown,
+      {
+        state: newState,
+        uniqueLinks: getUniqueLinks(state.note.content),
+      },
+    ],
+  ];
+};
+
+const loadNote = (options) => {
+  const name = options.name;
   const localNote = JSON.parse(localStorage.getItem(name));
-  if (
-    localNote &&
-    new Date(localNote.last_modified) > new Date(note.last_modified)
-  ) {
+  if (localNote) {
     return {
       content: localNote.content,
       uniqueLinks: getUniqueLinks(localNote.content),
     };
   }
-  return { content: note.content, uniqueLinks: getUniqueLinks(note.content) };
+  return {
+    content: defaultContent,
+    uniqueLinks: getUniqueLinks(defaultContent),
+  };
 };
 
-// // effects
+// effects
 const renderIcons = (dispatch, options) => {
   requestAnimationFrame(() => {
     feather.replace();
@@ -98,6 +202,24 @@ const focusInput = (dispatch, options) => {
     document.getElementById(options.id).focus();
   })
 }
+
+const attachMarkdown = (dispatch, options) => {
+  console.log("route", options.state.route);
+  const { content, uniqueLinks } = loadNote({ name: options.state.route });
+
+  const convertedMarkdown = linkSub(content, uniqueLinks);
+  const html = converter.makeHtml(convertedMarkdown);
+  requestAnimationFrame(() => {
+    const container = document.getElementById("container");
+    container.innerHTML = html;
+  });
+  dispatch(UpdateContent(options.state, content, options.state.route));
+};
+
+const DebounceSave = (dispatch, options) => {
+  dispatch(SaveNote(options.state, options.state.note.content, options.state.route));
+}
+
 const attachCodeJar = (dispatch, options) => {
   requestAnimationFrame(() => {
     let timeout = null;
@@ -113,168 +235,100 @@ const attachCodeJar = (dispatch, options) => {
     });
 
     jar.on("change", function (cm, change) {
-      dispatch(options.UpdateContent(options.state, cm.getValue()));
+      dispatch(
+        options.UpdateContent(options.state, cm.getValue(), options.state.route)
+      );
+
       container.addEventListener("keyup", (event)=> {
         if (event.keyCode === 13) {
           clearTimeout(timeout);
           timeout = setTimeout(function () {
-            dispatch(options.DebounceSave(dispatch, options.state, cm.getValue()));
+            dispatch(SaveNote(options.state, cm.getValue(), options.state.route));
           }, 1000);
         }
 
       })
     });
-
   });
 };
 
-const updateDatabase = (dispatch, options) => {
-  fetch(`/${options.state.note.name}`, {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(options.state.note),
-  })
-    .then((res) => {
-      if (res.status === 200) {
-        console.log("saved");
-        dispatch(setStatus(options.state, new Date().toUTCString()));
-      }
-    })
-    .catch((err) => {
-      console.log("error");
-      const newState = {
-        ...options.state,
-        note: {
-          ...options.state.note,
-          last_modified: new Date().toUTCString(),
-        },
-      };
-      localStorage.setItem(
-        options.state.note.name,
-        JSON.stringify(newState.note)
-      );
-      dispatch(setStatus(options.state, "failed to save"));
-    });
-};
-
-const modifyPublic = (dispatch, options) => {
-  const response = fetch(`/public/${options.note.name}`, {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ is_public: options.note.is_public }),
-  });
-};
-
-const attachMarkdown = (dispatch, options) => {
-  const { content, uniqueLinks } = checkUnsaved({ note: options.state.note });
-
-  const convertedMarkdown = linkSub(content, uniqueLinks);
-  const html = converter.makeHtml(convertedMarkdown);
-  requestAnimationFrame(() => {
-    const container = document.getElementById("container");
-    container.innerHTML = html;
-  });
-  dispatch(UpdateUnsaved(options.state, content));
-};
-
-const DebounceSave = (dispatch, state, newContent) => {
-  const bareLinks = getBareLinks(newContent);
-  const newState = {
-    ...state,
-    note: {
-      ...state.note,
-      last_modified: "saving",
-      content: newContent,
-      links: bareLinks,
-      recent_notes: [
-        state.note.name,
-        ...state.note.recent_notes.filter((name) => name != state.note.name),
-      ],
-    },
-  };
-  return [newState, [updateDatabase, { state: newState }], [renderIcons]];
-};
-
-const getNotes = async (dispatch, options) => {
+const getNotes = (dispatch, options) => {
+  let notes = allNotes();
   const searchTerm = options.state.searchTerm;
   let links = [];
-
-  const rawResponse = await fetch(`/search/${searchTerm}`, {
-    method: "GET",
-    headers: {
-      "Content-Type": "application/json",
-    },
-  });
-  if (rawResponse.status === 200) {
-    links = await rawResponse.json();
+  for (const note of notes) {
+    if (note.includes(searchTerm)) {
+      links.push(note);
+    }
   }
+  console.log(notes, links);
   dispatch(options.addSearchNotes(options.state, links));
 };
 
+const recentNotes = (dispatch, options) => {
+
+  const notes = [];
+  for (const key in localStorage) {
+    if (localStorage.hasOwnProperty(key)) {
+      notes.push(JSON.parse(localStorage.getItem(key)));
+    }
+  }
+  notes.sort((a, b) => new Date(b.last_modified) - new Date(a.last_modified))
+  const links = notes.map(note=> note.name);
+  return links
+} 
+
+
 // actions
-const UpdateContent = (state, newContent) => {
-  const bareLinks = getBareLinks(newContent);
-  return [
-    {
-      ...state,
-      note: {
-        ...state.note,
-        content: newContent,
-        last_modified: "saving",
-        links: bareLinks,
-        recent_notes: [
-          state.note.name,
-          ...state.note.recent_notes.filter((name) => name != state.note.name),
-        ],
-      },
-    },
-    [renderIcons],
-  ];
-};
-
-const UpdateUnsaved = (state, newContent) => {
-  const newState = {
-    ...state,
-    note: {
-      ...state.note,
-      content: newContent,
-      last_modified: "saving",
-      recent_notes: [
-        state.note.name,
-        ...state.note.recent_notes.filter((name) => name != state.note.name),
-      ],
-    },
-  };
-
-  return [newState, [updateDatabase, { state: newState }], [renderIcons]];
-};
-const setStatus = (state, status) => {
-  return [
-    {
-      ...state,
-      note: {
-        ...state.note,
-        last_modified: status,
-        recent_notes: [
-          state.note.name,
-          ...state.note.recent_notes.filter((name) => name != state.note.name),
-        ],
-      },
-    },
-    [renderIcons],
-  ];
-};
-
-// // actions
-
 const addSearchNotes = (state, notes) => ({
   ...state,
   searchLinks: notes,
 });
+
+const UpdateContent = (state, newContent, newName) => {
+  const bareLinks = getBareLinks(newContent);
+  const note = JSON.parse(localStorage.getItem(newName));
+  const recentLinks = recentNotes()
+  const updatedBacklinks = note ? note.backlinks : []
+  const newState = {
+    ...state,
+    route: newName,
+    note: {
+      ...state.note,
+      name: newName,
+      content: newContent,
+      last_modified: new Date().toISOString(),
+      links: bareLinks,
+      backlinks: updatedBacklinks,
+      recent_notes: [
+        newName,
+        ...recentLinks.filter((name) => name != newName),
+      ],
+    },
+  };
+  // updateLinks(newState);
+  // localStorage.setItem(newState.note.name, JSON.stringify(newState.note));
+  return [newState, [renderIcons]];
+};
+
+const SaveNote = (state, newContent, newName) => {
+  const bareLinks = getBareLinks(newContent);
+
+  const newState = {
+    ...state,
+    route: newName,
+    note: {
+      ...state.note,
+      name: newName,
+      content: newContent,
+      last_modified: new Date().toISOString(),
+      links: bareLinks,
+    },
+  };
+  newState.note.backlinks =  updateLinks(newState);
+  localStorage.setItem(newState.note.name, JSON.stringify(newState.note));
+  return [newState, [renderIcons]];
+};
 
 const Edit = (state) => {
   const newState = {
@@ -283,49 +337,11 @@ const Edit = (state) => {
   };
   return [
     newState,
-    [attachCodeJar, { state: newState, UpdateContent, DebounceSave }],
+    [attachCodeJar, { state: newState, UpdateContent }],
     [renderIcons],
   ];
 };
 
-const View = (state) => {
-  const rawMD = state.note.content;
-  const bareLinks = getBareLinks(state.note.content);
-  const uniqueLinks = getUniqueLinks(rawMD);
-  const newState = {
-    ...state,
-    view: "VIEW",
-    note: {
-      ...state.note,
-      last_modified: new Date().toUTCString(),
-      content: rawMD,
-      links: bareLinks,
-      recent_notes: [
-        state.note.name,
-        ...state.note.recent_notes.filter((name) => name != state.note.name),
-      ],
-    },
-  };
-  return [
-    newState,
-    [attachMarkdown, { state, uniqueLinks }],
-    [updateDatabase, { state: newState }],
-    [renderIcons],
-  ];
-};
-
-const Share = (state) => {
-  const newState = {
-    ...state,
-    view: "VIEW",
-    note: {
-      ...state.note,
-      is_public: !state.note.is_public,
-    },
-  };
-
-  return [newState, [modifyPublic, { note: newState.note }], [renderIcons]];
-};
 const collapseRight = (state) => {
   const newState = {
     ...state,
@@ -337,6 +353,7 @@ const collapseRight = (state) => {
 
   return [newState, [renderIcons]];
 };
+
 
 const collapseLeft = (state) => {
   const newState = {
@@ -373,10 +390,39 @@ const openAddCollapse = (state) => {
       ...state.note,
     },
   };
-  return [newState, [renderIcons],  [focusInput, {id: "add-input"}]];
+  return [newState, [renderIcons],  [focusInput, {id: "new-input"}]];
 };
 
+const View = (state) => {
+  const note = JSON.parse(localStorage.getItem(state.route));
+  const rawMD = note ? note.content : state.note.content;
+
+  const bareLinks = getBareLinks(rawMD);
+  const uniqueLinks = getUniqueLinks(rawMD);
+  const recentLinks = recentNotes()
+  const newState = {
+    ...state,
+    view: "VIEW",
+    note: {
+      ...state.note,
+      last_modified: new Date().toUTCString(),
+      content: rawMD,
+      links: bareLinks,
+      recent_notes: [
+        newName,
+        ...recentLinks.filter((name) => name != state.note.name),
+      ],
+    },
+  };
+  return [
+    newState,
+    [attachMarkdown, { state: newState, uniqueLinks }],
+    [DebounceSave, {state: newState}],
+    [renderIcons],
+  ];
+};
 // modules
+
 const list = {
   init: (x) => x,
   toggle: (x) => !x,
@@ -417,11 +463,12 @@ const list = {
         ),
       ]),
       ...model.links.map((link) =>
-        h("a", { href: `/notes/${link}`, class: "toggle-link" }, text(link))
+        h("a", { href: `#${link}`, class: "toggle-link" }, text(link))
       ),
     ]);
   },
 };
+
 
 const searchModule = {
   init: (x) => x,
@@ -491,7 +538,7 @@ const addModule = {
       setNewNoteName(state, event.target.value);
 
     const redirectToPage = (state) => {
-      window.location.href = `${location.origin}/notes/${state.newNoteName}`;
+      window.location.href = `#${state.newNoteName}`;
     };
 
     return (state) => ({
@@ -534,22 +581,8 @@ const addModule = {
   },
 };
 
+
 // views
-
-const ToggleList = (title, links) => {
-  return h("div", { class: "toggle-list" }, [
-    h("div", { class: "toggle-title" }, [
-      h("div", { class: "title-tag" }, title),
-      h("a", { class: "icon-wrap mlauto toggle-chevron" }, [
-        h("i", { "data-feather": "chevron-down", class: "icon" }),
-      ]),
-    ]),
-    links.map((link) =>
-      h("a", { href: `/notes/${link}`, class: "toggle-link" }, link)
-    ),
-  ]);
-};
-
 const LinkNumberDec = (length, backlinks = true, collapsed) => {
   if (collapsed) {
     return h(
@@ -564,6 +597,7 @@ const LinkNumberDec = (length, backlinks = true, collapsed) => {
     text(`${length} ${backlinks ? "back" : ""}link${length !== 1 ? "s" : ""}`)
   );
 };
+
 const recentList = list.model({
   getter: (state) => [state.collapseRecent, "Recent", state.note.recent_notes],
   setter: (state, toggleRecent) => [
@@ -571,7 +605,6 @@ const recentList = list.model({
     [renderIcons],
   ],
 });
-
 const linksList = list.model({
   getter: (state) => [state.collapseLinks, "Links", state.note.links],
   setter: (state, toggleLinks) => [
@@ -591,7 +624,6 @@ const backlinksList = list.model({
     [renderIcons],
   ],
 });
-
 const searchList = list.model({
   getter: (state) => [state.collapseSearch, "Search", state.searchLinks],
   setter: (state, toggleSearch) => [
@@ -639,6 +671,31 @@ const addInput = addModule.model({
   ],
 });
 
+const central = (props) => {
+  const viewButton =
+    props.view === "EDIT"
+      ? h("button", { onclick: View, class: "config-button" }, text("edit"))
+      : h("button", { onclick: Edit, class: "config-button" }, text("view"));
+
+  return h("div", { class: "central-pane" }, [
+    h("div", { class: "central-content-wrap" }, [
+      h("div", { class: "title-bar" }, [
+        h("div", { class: "titlebar-title" }, text(props.note.name)),
+        h("div", { class: "titlebar-right" }, [viewButton]),
+      ]),
+      h("div", { class: "content-wrapper" }, [
+        h("div", { id: "container", class: "main" }),
+      ]),
+    ]),
+    h("div", { class: "footer" }, [
+      h(
+        "div",
+        { class: "last-modified" },
+        text(`${getlastEdited(props.note.last_modified)}`)
+      ),
+    ]),
+  ]);
+};
 const left = (props) => {
   if (props.collapseLeft) {
     return h("div", { class: "side-pane-collapsed left-pane-collapsed" }, [
@@ -674,6 +731,7 @@ const left = (props) => {
   ]);
 };
 
+
 const right = (props) => {
   if (props.collapseRight) {
     return h("div", { class: "side-pane-collapsed right-pane-collapsed" }, [
@@ -705,90 +763,6 @@ const right = (props) => {
   ]);
 };
 
-const editBtn = (props) => {
-  return h(
-    "button",
-    { onclick: View, class: "config-button" },
-    h("div", {}, [
-      h("a", { class: "icon-wrap" }, [
-        h("i", { "data-feather": "eye", class: "icon" }),
-      ]),
-    ])
-  );
-};
-const viewBtn = (props) => {
-  return h(
-    "button",
-    { onclick: Edit, class: "config-button" },
-    h("a", { class: "icon-wrap" }, [
-      h("i", { "data-feather": "edit-2", class: "icon" }),
-    ])
-  );
-};
-
-const lockBtn = (props) => {
-  return h(
-    "button",
-    { onclick: Share, class: "config-button" },
-    h("a", { class: "icon-wrap" }, [
-      h("i", { "data-feather": "lock", class: "icon" }),
-    ])
-  );
-};
-
-const unlockBtn = (props) => {
-  return h(
-    "button",
-    { onclick: Share, class: "config-button" },
-    h("div", {}, [
-      h("a", { class: "icon-wrap" }, [
-        h("i", { "data-feather": "unlock", class: "icon" }),
-      ]),
-    ])
-  );
-};
-const central = (props) => {
-  const publicUrl = `${location.origin}/public/${props.note.name}`;
-
-  const viewButton = props.view === "EDIT" ? editBtn(props) : viewBtn(props);
-  // const viewButton =
-  //   props.view === "EDIT"
-  //     ? h("button", { onclick: View, class: "config-button" }, text("edit"))
-  //     : h("button", { onclick: Edit, class: "config-button" }, text("view"));
-  const publicContent =
-    props.note.is_public === true
-      ? h("div", { class: "url-content mlauto" }, [
-          h("div", { class: "url-tag " }, text("public url: ")),
-          h("a", { class: "url-wrapper ", href: publicUrl }, text(publicUrl)),
-        ])
-      : h("div", { class: "url-content mlauto" }, [
-          h("div", { class: "url-tag " }, text("")),
-        ]);
-
-  const shareButton =
-    props.note.is_public === true ? lockBtn(props) : unlockBtn(props);
-
-  return h("div", { class: "central-pane" }, [
-    h("div", { class: "central-content-wrap" }, [
-      h("div", { class: "title-bar" }, [
-        h("div", { class: "titlebar-title" }, text(props.note.name)),
-        h("div", { class: "titlebar-right" }, [viewButton, shareButton]),
-      ]),
-      h("div", { class: "content-wrapper" }, [
-        h("div", { id: "container", class: "main" }),
-      ]),
-    ]),
-    h("div", { class: "footer" }, [
-      h(
-        "div",
-        { class: "last-modified" },
-        text(`${getlastEdited(props.note.last_modified)}`)
-      ),
-      publicContent,
-    ]),
-  ]);
-};
-
 const main = (props) => {
   return h("div", { class: "wrapper" }, [
     left(props),
@@ -812,7 +786,14 @@ note:
 
 const initState = {
   view: "VIEW",
-  note: input,
+  note: {
+    name: "Loading",
+    content: "Loading...",
+    links: [],
+    backlinks: [],
+    last_modified: new Date().toISOString(),
+    recent_notes: [],
+  },
   collapseLeft: false,
   collapseRight: false,
   collapseRecent: false,
@@ -826,20 +807,12 @@ const initState = {
   newNoteName: "",
   todos: [],
   value: "",
+  route: "",
 };
 
 app({
-  init: [
-    initState,
-    [
-      attachMarkdown,
-      {
-        state: initState,
-        uniqueLinks: getUniqueLinks(input.content),
-      },
-    ],
-    [renderIcons],
-  ],
+  init: [initState],
   view: (state) => main(state),
+  subscriptions: (state) => [onhashchange(HashHandler)],
   node: document.getElementById("app"),
 });

@@ -19,6 +19,12 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 def html_handler():
     return RedirectResponse(url=f'/notes/{datetime.now().strftime("%Y-%m-%d")}')
 
+@app.get("/playground")
+def html_handler():
+    note_template = Template((open("playground.html").read()))
+    note_css = open("style.css").read()
+    js = open("playground.js").read()
+    return HTMLResponse(note_template.render(playground_js=js, css=note_css))
 
 @app.get("/search/{search_term}")
 def search_handler(search_term: str):
