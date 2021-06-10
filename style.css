@@ -315,6 +315,13 @@ a.toggle-link:hover {
   font-family: Roboto Mono, Courier, monospace;
 }
 
+a {
+  color: #98b9f9;
+  text-decoration: none;
+  font-weight: 700;
+  font-family: Roboto Mono, Courier, monospace;
+}
+
 /* search */
 .input {
   border-color: #000000 !important;

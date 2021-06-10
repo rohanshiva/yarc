@@ -409,7 +409,7 @@ const View = (state) => {
       content: rawMD,
       links: bareLinks,
       recent_notes: [
-        newName,
+        state.note.name,
         ...recentLinks.filter((name) => name != state.note.name),
       ],
     },
@@ -538,7 +538,7 @@ const addModule = {
       setNewNoteName(state, event.target.value);
 
     const redirectToPage = (state) => {
-      window.location.href = `#${state.newNoteName}`;
+      window.location = `#${state.newNoteName}`;
     };
 
     return (state) => ({
@@ -563,7 +563,7 @@ const addModule = {
             "a",
             {
               class: "icon-wrap mlauto check",
-              onclick: model.redirectToPage,
+              href: `#${model._state.newNoteName}`,
             },
             [h("i", { "data-feather": "check", class: "icon" })]
           ),
