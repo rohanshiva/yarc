@@ -184,6 +184,10 @@ const loadNote = (options) => {
       uniqueLinks: getUniqueLinks(localNote.content),
     };
   }
+  const note = defaultNote;
+  note.name = options.name;
+  note.links = ["link"]
+  localStorage.setItem(options.name, JSON.stringify(note));
   return {
     content: defaultContent,
     uniqueLinks: getUniqueLinks(defaultContent),

@@ -30,6 +30,12 @@ def html_handler():
 def search_handler(search_term: str):
     return fetch_notes(search_term)
 
+@app.get("/notes")
+def notes_handler():
+    note_template = Template((open("note.html").read()))
+    note_css = open("style.css").read()
+    note_js = open("note.js").read()
+    return HTMLResponse(note_template.render(note_js=note_js, css=note_css))
 
 #create notes or update backlinks server side if diff in links
 @app.get("/notes/{note_name}")
